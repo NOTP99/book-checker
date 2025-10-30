@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>도서 확인 프로그램</title>
+    <title>도서 확인 프로그램 (결과 형식 간소화)</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- SheetJS (Excel Parser) CDN -->
@@ -31,7 +31,7 @@
 
     <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-6 md:p-8">
         <header class="mb-6 border-b pb-4">
-            <h1 class="text-3xl font-bold text-gray-800">📚 도서 확인 프로그램</h1>
+            <h1 class="text-3xl font-bold font-bold text-gray-800">📚 도서 확인 프로그램</h1>
             <p class="text-gray-500 mt-1">엑셀 파일을 불러온 후, 등록 번호, ISBN, 또는 서명을 통해 재고를 실시간으로 확인하세요.</p>
         </header>
 
@@ -48,8 +48,8 @@
 
         <!-- 1. 엑셀 파일 업로드 -->
         <section class="mb-6 p-4 border-2 border-dashed border-indigo-300 rounded-lg bg-indigo-50">
-            <h2 class="text-xl font-semibold text-indigo-700 mb-2">1. 엑셀 목록 불러오기 (서명, ISBN, 등록 번호 필수)</h2>
-            <p class="text-sm text-indigo-600 mb-3">엑셀 파일의 첫 번째 시트를 불러옵니다. **'서명'**, **'ISBN'**, **'등록 번호'** 열이 포함되어 있어야 합니다.</p>
+            <h2 class="text-xl font-semibold text-indigo-700 mb-2">1. 엑셀 목록 불러오기 (재고 확인 결과 파일도 가능)</h2>
+            <p class="text-sm text-indigo-600 mb-3">엑셀 파일의 첫 번째 시트를 불러옵니다. 이전에 내보낸 **결과 파일**을 불러오면 **체크 상태가 복원**됩니다.</p>
             <input type="file" id="excel-file" accept=".xlsx, .xls, .csv" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-500 file:text-white hover:file:bg-indigo-600 cursor-pointer">
             <p id="file-status" class="mt-2 text-sm font-medium text-red-500"></p>
         </section>
@@ -123,7 +123,7 @@
         let bookList = [];
         let totalBookCount = 0;
         let checkedBookCount = 0;
-        let showUncheckedOnly = false; // [기능 1] 목록 필터링 상태
+        let showUncheckedOnly = false; // 목록 필터링 상태
 
         // HTML 요소 참조
         const excelFileEl = document.getElementById('excel-file');
@@ -138,7 +138,7 @@
         const loadingOverlayEl = document.getElementById('loading-overlay');
         const loadingTextEl = document.getElementById('loading-text');
         const exportButtonEl = document.getElementById('export-button');
-        const filterButtonEl = document.getElementById('filter-button'); // [기능 1] 필터 버튼 참조
+        const filterButtonEl = document.getElementById('filter-button'); 
 
         // 모달 요소 참조
         const messageModalEl = document.getElementById('message-modal');
@@ -181,14 +181,14 @@
                 scanInputEl.disabled = false;
                 checkButtonEl.disabled = false;
                 exportButtonEl.disabled = false;
-                filterButtonEl.disabled = false; // [기능 1] 필터 버튼 활성화
+                filterButtonEl.disabled = false; 
                 scanInputEl.focus();
             } else {
                 checkAreaEl.classList.add('opacity-50', 'pointer-events-none');
                 scanInputEl.disabled = true;
                 checkButtonEl.disabled = true;
                 exportButtonEl.disabled = true;
-                filterButtonEl.disabled = true; // [기능 1] 필터 버튼 비활성화
+                filterButtonEl.disabled = true; 
             }
         }
         
@@ -242,7 +242,11 @@
                     const isbnIndex = normalizedHeaders.findIndex(h => h.includes('ISBN'));
                     const titleIndex = normalizedHeaders.findIndex(h => h.includes('서명') || h.includes('제목') || h.includes('TITLE'));
                     
+                    // --- 상태 복원 로직을 위한 열 인덱스 찾기 ---
                     const remarksIndex = normalizedHeaders.findIndex(h => h.includes('비고') || h.includes('REMARKS') || h.includes('COMMENT'));
+                    const checkedStatusIndex = normalizedHeaders.findIndex(h => h.includes('확인') && h.includes('상태'));
+                    // --- 상태 복원 로직 끝 ---
+
 
                     if (regNoIndex === -1 || isbnIndex === -1 || titleIndex === -1) {
                         showMessage("필수 열 누락", `엑셀 헤더에서 '서명', 'ISBN', 또는 '등록 번호' 열을 찾을 수 없습니다.`);
@@ -256,7 +260,22 @@
                         const title = row[titleIndex] ? String(row[titleIndex]).trim() : '제목 없음';
                         const rawRegNo = row[regNoIndex] ? String(row[regNoIndex]).trim() : '';
                         const rawIsbn = row[isbnIndex] ? String(row[isbnIndex]).replace(/[^0-9X]/gi, '') : '';
-                        const rawRemarks = remarksIndex !== -1 && row[remarksIndex] ? String(row[remarksIndex]).trim() : '';
+                        
+                        let initialRemarks = '';
+                        if (remarksIndex !== -1 && row[remarksIndex]) {
+                             initialRemarks = String(row[remarksIndex]).trim();
+                        }
+
+                        let initialChecked = false;
+                        if (checkedStatusIndex !== -1 && row[checkedStatusIndex]) {
+                            const statusText = String(row[checkedStatusIndex]).toUpperCase();
+                            
+                            // 엑셀에서 '확인 (✓)' 또는 '확인 완료 (✓)'와 같이 긍정 지표를 포함하는 텍스트만 체크로 간주
+                            // '없음'을 미확인으로 처리함
+                            if (statusText.includes('확인') && (statusText.includes('✓') || statusText.includes('완료') || statusText.includes('CHECKED'))) {
+                                initialChecked = true;
+                            }
+                        }
 
                         let originalData = {};
                         originalExcelHeaders.forEach((header, i) => {
@@ -268,15 +287,15 @@
                             RegNo: rawRegNo,
                             ISBN: rawIsbn,
                             Title: title,
-                            checked: false,
-                            Remarks: rawRemarks
+                            checked: initialChecked, // 복원된 상태 적용
+                            Remarks: initialRemarks // 복원된 비고 적용
                         };
                     }).filter(book => book.ISBN || book.RegNo);
 
                     totalBookCount = bookList.length;
-                    checkedBookCount = 0;
+                    checkedBookCount = bookList.filter(b => b.checked).length; // 복원된 상태 기준으로 카운트
                     
-                    fileStatusEl.textContent = `✅ ${fileName} 파일 로드 완료. 총 ${totalBookCount}권의 도서 목록.`;
+                    fileStatusEl.textContent = `✅ ${fileName} 파일 로드 완료. 총 ${totalBookCount}권 중 ${checkedBookCount}권의 상태 복원 완료.`;
                     
                     updateUIState(true);
                     // 파일 로드 시 필터 상태 초기화 및 UI 업데이트
@@ -318,7 +337,7 @@
             scanInputEl.focus();
         }
 
-        // [기능 3] 목록에서 직접 상태를 토글하는 함수
+        // 목록에서 직접 상태를 토글하는 함수
         function toggleCheckStatus(index) {
             if (index >= 0 && index < bookList.length) {
                 // 현재 상태를 반전
@@ -337,7 +356,7 @@
             totalCountEl.textContent = totalBookCount;
             checkedCountEl.textContent = checkedBookCount;
             
-            // --- [기능 1] 필터링 로직 ---
+            // --- 필터링 로직 ---
             let displayList = [...bookList];
             if (showUncheckedOnly) {
                 displayList = displayList.filter(book => !book.checked);
@@ -369,7 +388,7 @@
                 const row = document.createElement('tr');
                 const bgColor = book.checked ? 'bg-green-50' : (sortedList.indexOf(book) % 2 === 0 ? 'bg-white' : 'bg-gray-50');
                 
-                // [기능 3] 상태 토글을 위한 아이콘 및 클래스
+                // 상태 토글을 위한 아이콘 및 클래스 (UI 표시)
                 const checkIcon = book.checked 
                     ? '<span class="text-green-600 font-bold text-xl select-none">✓</span>' 
                     : '<span class="text-gray-400 select-none">□</span>';
@@ -395,7 +414,7 @@
                 bookListBodyEl.appendChild(row);
             });
 
-            // [기능 3] 이벤트 위임으로 상태 토글 리스너 추가
+            // 이벤트 위임으로 상태 토글 리스너 추가
             document.querySelectorAll('.toggle-status').forEach(cell => {
                 cell.addEventListener('click', (e) => {
                     const index = e.currentTarget.getAttribute('data-index');
@@ -533,20 +552,27 @@
             }
             
             // 1. 최종 헤더 구성: 원본 헤더 + ['확인 상태', '비고']
-            const finalHeaders = [...originalExcelHeaders, '확인 상태', '비고'];
+            const standardHeaders = ['확인 상태', '비고'];
             
-            // 2. 데이터를 헤더 순서에 맞게 배열로 구성합니다.
+            // 기존 헤더에서 표준 헤더를 제외한 후, 표준 헤더를 끝에 붙입니다.
+            let finalHeaders = [...originalExcelHeaders];
+            standardHeaders.forEach(h => {
+                if (!finalHeaders.includes(h)) {
+                    finalHeaders.push(h);
+                }
+            });
+            
+            // 2. 데이터를 헤더 순서에 맞게 배열로 구성합니다. (요청된 형식으로 변경)
             const dataForSheet = bookList.map(book => {
                 const row = {};
 
                 // 원본 데이터 필드를 먼저 채웁니다.
                 originalExcelHeaders.forEach(header => {
-                    // 원본 데이터 필드 값을 가져옵니다. 값이 없으면 빈 문자열 처리
                     row[header] = book.OriginalData[header] || '';
                 });
 
-                // 맨 끝에 추가된 필드를 채웁니다.
-                row['확인 상태'] = book.checked ? '확인 완료 (✓)' : '미확인 (□)';
+                // 맨 끝에 추가된 필드를 채웁니다. (요청 형식 반영)
+                row['확인 상태'] = book.checked ? '확인 (✓)' : '없음'; // <--- 이 부분 수정
                 row['비고'] = book.Remarks || '';
 
                 return row;
@@ -566,7 +592,7 @@
         excelFileEl.addEventListener('change', loadExcel);
         checkButtonEl.addEventListener('click', searchAndCheck);
         exportButtonEl.addEventListener('click', exportToExcel);
-        filterButtonEl.addEventListener('click', toggleFilter); // [기능 1] 필터 버튼 리스너 추가
+        filterButtonEl.addEventListener('click', toggleFilter); 
         
         scanInputEl.addEventListener('keypress', function(e) {
             // 엔터 키 입력 시 검색 실행
