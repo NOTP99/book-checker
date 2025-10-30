@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>도서 확인 프로그램 (검색 입력 유효성 수정)</title>
+    <title>도서 확인 프로그램 (자동 완성 기능 추가)</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- SheetJS (Excel Parser) CDN -->
@@ -24,6 +24,38 @@
         /* 사용자에게 클릭 가능함을 시각적으로 알려줌 */
         .toggle-status {
             cursor: pointer;
+        }
+
+        /* 2. 자동 완성 목록 스타일 */
+        .autocomplete-container {
+            position: relative;
+        }
+
+        #autocomplete-list {
+            position: absolute;
+            z-index: 10;
+            max-height: 200px;
+            overflow-y: auto;
+            width: 100%;
+            background-color: white;
+            border: 1px solid #d1d5db; /* gray-300 */
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: background-color 0.15s;
+            border-bottom: 1px solid #f3f4f6; /* gray-100 */
+        }
+
+        .autocomplete-item:hover, .autocomplete-item.active {
+            background-color: #e0f2f1; /* teal-50 for hover/active */
+        }
+        .autocomplete-item:last-child {
+            border-bottom: none;
         }
     </style>
 </head>
@@ -49,7 +81,7 @@
         <!-- 1. 엑셀 파일 업로드 -->
         <section class="mb-6 p-4 border-2 border-dashed border-indigo-300 rounded-lg bg-indigo-50">
             <h2 class="text-xl font-semibold text-indigo-700 mb-2">1. 엑셀 목록 불러오기 (재고 확인 결과 파일도 가능)</h2>
-            <p class="text-sm text-indigo-600 mb-3">엑셀 파일의 첫 번째 시트를 불러옵니다. 이전에 내보낸 **결과 파일**을 불러오면 **체크 상태가 복원**됩니다.</p>
+            <p class="text-sm text-indigo-600 mb-3">엑셀 파일의 첫 번째 시트를 불러옵니다. '서명', 'ISBN', '등록 번호' 열이 포함되어 있어야 합니다.</p>
             <input type="file" id="excel-file" accept=".xlsx, .xls, .csv" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-500 file:text-white hover:file:bg-indigo-600 cursor-pointer">
             <p id="file-status" class="mt-2 text-sm font-medium text-red-500"></p>
         </section>
@@ -60,11 +92,19 @@
             <div id="check-area" class="opacity-50 pointer-events-none transition duration-300">
                 
                 <!-- A. 텍스트 입력/스캔 영역 -->
-                <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4">
-                    <input type="text" id="scan-input" placeholder="등록 번호, ISBN 또는 책 제목을 입력하세요 (예: HC000797, 97889...)"
-                        class="flex-grow p-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-indigo-500 text-lg" 
-                        disabled
-                        inputmode="verbatim" lang="en" spellcheck="false">
+                <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3 mb-4 autocomplete-container">
+                    
+                    <div class="flex-grow relative">
+                        <!-- 입력 필드 -->
+                        <input type="text" id="scan-input" placeholder="등록 번호, ISBN 또는 책 제목을 입력하세요 (예: HC000797, 97889...)"
+                            class="w-full p-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-indigo-500 text-lg" 
+                            disabled
+                            inputmode="verbatim" lang="en" spellcheck="false">
+                        
+                        <!-- 자동 완성 목록이 표시될 영역 -->
+                        <div id="autocomplete-list"></div>
+                    </div>
+
                     <button id="check-button" class="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg shadow-md transition duration-200 disabled:bg-indigo-300" disabled>
                         재고 확인
                     </button>
@@ -124,6 +164,7 @@
         let totalBookCount = 0;
         let checkedBookCount = 0;
         let showUncheckedOnly = false; // 목록 필터링 상태
+        let currentFocus = -1; // 자동 완성 목록 포커스 관리 (키보드 네비게이션용)
 
         // HTML 요소 참조
         const excelFileEl = document.getElementById('excel-file');
@@ -139,6 +180,7 @@
         const loadingTextEl = document.getElementById('loading-text');
         const exportButtonEl = document.getElementById('export-button');
         const filterButtonEl = document.getElementById('filter-button'); 
+        const autocompleteListEl = document.getElementById('autocomplete-list'); // 새로 추가
 
         // 모달 요소 참조
         const messageModalEl = document.getElementById('message-modal');
@@ -256,7 +298,7 @@
                         return;
                     }
 
-                    bookList = dataRows.map(row => {
+                    bookList = dataRows.map((row, index) => {
                         const title = row[titleIndex] ? String(row[titleIndex]).trim() : '제목 없음';
                         const rawRegNo = row[regNoIndex] ? String(row[regNoIndex]).trim() : '';
                         const rawIsbn = row[isbnIndex] ? String(row[isbnIndex]).replace(/[^0-9X]/gi, '') : '';
@@ -282,6 +324,7 @@
                         });
 
                         return {
+                            OriginalIndex: index, // 원본 bookList 내에서의 인덱스
                             OriginalData: originalData,
                             RegNo: rawRegNo,
                             ISBN: rawIsbn,
@@ -393,7 +436,7 @@
                     : '<span class="text-gray-400 select-none">□</span>';
                 
                 // 원본 bookList 내에서의 인덱스 (Remarks 업데이트와 상태 토글을 위해 필요)
-                const originalIndex = bookList.findIndex(b => b === book); 
+                const originalIndex = book.OriginalIndex; 
 
                 const remarksCellContent = book.checked 
                     ? `<span class="text-gray-600 text-sm">${book.Remarks || '-'}</span>`
@@ -464,23 +507,116 @@
 
             return convertedText;
         }
+        
+        // **새로 추가된 함수: 자동 완성 검색**
+        function autocompleteSearch(input) {
+            const inputTrimmed = input.trim();
+            if (inputTrimmed.length < 2) {
+                autocompleteListEl.innerHTML = '';
+                return;
+            }
 
+            const inputUpper = inputTrimmed.toUpperCase();
+            
+            const results = bookList
+                // 이미 확인된 책은 결과에서 제외
+                .filter(book => !book.checked)
+                // 제목에 입력 문자열이 포함되는 책만 필터링
+                .filter(book => book.Title.toUpperCase().includes(inputUpper))
+                // 최대 10개만 반환
+                .slice(0, 10); 
+
+            renderAutocompleteList(results, inputUpper);
+        }
+
+        // **새로 추가된 함수: 자동 완성 목록 렌더링**
+        function renderAutocompleteList(results, inputUpper) {
+            autocompleteListEl.innerHTML = '';
+            currentFocus = -1;
+
+            if (results.length === 0) {
+                return;
+            }
+            
+            results.forEach((book) => {
+                const item = document.createElement('div');
+                item.className = 'autocomplete-item text-sm text-gray-700 truncate';
+                item.setAttribute('data-index', book.OriginalIndex); // bookList 내의 원본 인덱스
+                
+                // 매칭된 부분을 하이라이트
+                const titleLower = book.Title.toLowerCase();
+                const inputLower = inputUpper.toLowerCase();
+                const startIndex = titleLower.indexOf(inputLower);
+
+                if (startIndex !== -1) {
+                    const before = book.Title.substring(0, startIndex);
+                    const match = book.Title.substring(startIndex, startIndex + inputLower.length);
+                    const after = book.Title.substring(startIndex + inputLower.length);
+                    
+                    item.innerHTML = `${before}<strong class="text-indigo-600 font-bold">${match}</strong>${after}`;
+                } else {
+                    item.textContent = book.Title;
+                }
+                
+                // 항목 클릭 이벤트: 즉시 체크
+                item.addEventListener('click', function(e) {
+                    const index = parseInt(e.currentTarget.getAttribute('data-index'), 10);
+                    // checkBookByIndex 함수를 사용하여 체크 및 UI 업데이트
+                    checkBookByIndex(index);
+                    autocompleteListEl.innerHTML = ''; // 목록 숨기기
+                    scanInputEl.value = ''; // 입력 초기화
+                    scanInputEl.focus();
+                });
+                
+                autocompleteListEl.appendChild(item);
+            });
+        }
+        
+        // **새로 추가된 함수: 특정 인덱스 책을 체크하고 결과 표시**
+        function checkBookByIndex(index) {
+            const foundBook = bookList[index];
+            if (foundBook) {
+                if (foundBook.checked) {
+                    checkResultEl.innerHTML = `<span class="text-orange-500">⚠️ "${foundBook.Title}"은 이미 확인된 책입니다. (등록 번호: ${foundBook.RegNo})</span>`;
+                } else {
+                    foundBook.checked = true; // 상태 업데이트
+                    renderList(); // 목록 다시 그리기
+                    checkResultEl.innerHTML = `<span class="text-green-600">✅ [확인 완료] "${foundBook.Title}"</span>`;
+                }
+            }
+        }
+        
         // 스캔 입력값을 처리하고 목록에서 책을 찾아 상태를 업데이트하는 함수 (텍스트 기반)
         function searchAndCheck() {
             const rawInput = scanInputEl.value.trim();
             
+            // 자동 완성 목록이 열려 있고 포커스가 있다면 (키보드 네비게이션 사용)
+            if (autocompleteListEl.children.length > 0 && currentFocus > -1) {
+                const focusedItem = autocompleteListEl.children[currentFocus];
+                if (focusedItem) {
+                    // 포커스된 항목의 클릭 이벤트 직접 실행
+                    focusedItem.click();
+                    return;
+                }
+            }
+            
+            // 일반 스캔/입력 처리 로직
+            
+            // 목록 숨기기
+            autocompleteListEl.innerHTML = ''; 
+
             if (bookList.length === 0) {
                  checkResultEl.innerHTML = '<span class="text-orange-500">⚠️ 먼저 엑셀 파일을 업로드해주세요.</span>';
                  scanInputEl.focus();
-                 scanInputEl.value = ''; // 입력값 비우기
-                 return; // 파일이 로드되지 않았으므로 즉시 종료
+                 scanInputEl.value = '';
+                 return; 
             }
 
             if (rawInput.length < 3) {
                 checkResultEl.innerHTML = '<span class="text-red-500">❌ 최소 3글자 이상 입력해주세요.</span>';
                 scanInputEl.focus();
-                scanInputEl.value = ''; // 입력값 비우기
-                return; // ***수정: 입력 길이가 짧으면 여기서 즉시 종료***
+                scanInputEl.value = '';
+                return; 
             }
             
             let correctedInput = convertKoreanToEnglish(rawInput);
@@ -515,12 +651,12 @@
                 }
             }
 
-            // 3. 서명 (Title)으로 부분 매칭 시도
+            // 3. 서명 (Title)으로 부분 매칭 시도 (등록 번호/ISBN 검색 실패 시 최후의 수단으로 작동)
             if (!foundBook) {
-                // 이미 확인된 책은 건너뛰고, 확인되지 않은 책 중에서 찾음 (띄어쓰기 무시)
+                // 띄어쓰기 무시
                 const inputNoSpace = inputUpper.replace(/\s/g, '');
                 foundBook = bookList.find(book => 
-                    book.Title.toUpperCase().replace(/\s/g, '').includes(inputNoSpace) && !book.checked
+                    book.Title.toUpperCase().replace(/\s/g, '').includes(inputNoSpace)
                 );
             }
             
@@ -587,6 +723,46 @@
             const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
             XLSX.writeFile(workbook, `도서_재고확인_결과_${date}.xlsx`);
         }
+        
+        // **키보드 네비게이션 관리 함수**
+        function keyboardNavigation(e) {
+            const list = autocompleteListEl.children;
+            if (list.length === 0) return;
+
+            // 포커스 제거
+            function removeActive(x) {
+                for (let i = 0; i < x.length; i++) {
+                    x[i].classList.remove("active");
+                }
+            }
+
+            // 포커스 설정
+            function addActive(x) {
+                if (!x) return false;
+                removeActive(x);
+                x[currentFocus].classList.add("active");
+                // 스크롤 이동
+                x[currentFocus].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+
+            if (e.key === "ArrowDown") {
+                currentFocus++;
+                if (currentFocus >= list.length) currentFocus = 0;
+                addActive(list);
+                e.preventDefault();
+            } else if (e.key === "ArrowUp") {
+                currentFocus--;
+                if (currentFocus < 0) currentFocus = list.length - 1;
+                addActive(list);
+                e.preventDefault();
+            } else if (e.key === "Enter") {
+                // Enter는 searchAndCheck()에서 처리
+            } else if (e.key === "Escape") {
+                // Esc 키 누르면 목록 숨기기
+                autocompleteListEl.innerHTML = '';
+                currentFocus = -1;
+            }
+        }
 
 
         // 이벤트 리스너 등록
@@ -595,6 +771,13 @@
         exportButtonEl.addEventListener('click', exportToExcel);
         filterButtonEl.addEventListener('click', toggleFilter); 
         
+        scanInputEl.addEventListener('input', function() {
+            // 입력창 내용이 바뀔 때마다 자동 완성 검색 실행
+            autocompleteSearch(this.value);
+        });
+
+        scanInputEl.addEventListener('keydown', keyboardNavigation); // 키보드 이벤트 추가
+        
         scanInputEl.addEventListener('keypress', function(e) {
             // 엔터 키 입력 시 검색 실행
             if (e.key === 'Enter') {
@@ -602,6 +785,15 @@
                 searchAndCheck();
             }
         });
+        
+        // 입력창 외의 영역 클릭 시 자동 완성 목록 숨기기
+        document.addEventListener("click", function (e) {
+            if (e.target !== scanInputEl && e.target.closest('#autocomplete-list') === null) {
+                autocompleteListEl.innerHTML = '';
+                currentFocus = -1;
+            }
+        });
+
 
         // 초기화 시 로드 버튼 상태 업데이트
         document.addEventListener('DOMContentLoaded', () => {
